@@ -18,12 +18,14 @@
 #define KCOV_PATH "/dev/kcov"
 typedef uint64_t cover_t;
 #define COVER_SIZE (16 << 20)
+#define BUF_SIZE (2 << 20)
 #define COUNT 15000000
 #define COV_FILE "coverage.info"
 #define ADDR2LINE "/usr/local/bin/addr2line"
-#define KERNEL "/usr/obj/usr/src/amd64.amd64/sys/GENERIC/kernel.debug"
+// #define KERNEL "/usr/obj/usr/src/amd64.amd64/sys/GENERIC/kernel.debug"
+#define KERNEL "/usr/lib/debug/boot/kernel/kernel.debug"
 #define KERNDIR "/usr/src/sys"
-#define COV_DIR "cov_info_full"
+#define COV_DIR "cov_info"
 
 #define NOTFOUND 1
 #define NF_FILE "notfound.txt"  //not found functions
@@ -38,25 +40,44 @@ static int compare(const void *p1, const void *p2)
 	return (0);
 }
 
-int wtfile(char *fname, int j, cover_t *cover)
+int wtfile(cover_t *buffer, int nbuf)
 {
+	int i;
 	FILE *fd;
-	long i;
+	fd = fopen("rawfiles/rawfile.txt", "w");
+	if (!fd) return 1;
+	fprintf(fd, "%jx\n", (uintmax_t)buffer[0]);
+	for (i = 0; i < nbuf - 1; i++) {
+		if (buffer[i] != buffer[i + 1])
+			fprintf(fd, "%jx\n", (uintmax_t)buffer[i + 1]);
+	}
+	fclose(fd);
+	return 0;
+}
+
+int wtbuffer(char *fname, int j, cover_t *cover, cover_t *buffer, int *nbuf)
+{
+	int i;
 	cover_t *dupl = malloc(cover[0] * KCOV_ENTRY_SIZE);
 	if (!dupl) return 1;
 	memcpy(dupl, &cover[1], cover[0] * KCOV_ENTRY_SIZE);
 
 	qsort(dupl, cover[0], KCOV_ENTRY_SIZE, compare);
 
-	sprintf(fname, "rawfiles/rawfile%i.txt", j);
-	fd = fopen(fname, "w");
-	if (!fd) return 1;
-	fprintf(fd, "%jx\n", (uintmax_t)dupl[0]);
+	// sprintf(fname, "rawfiles/rawfile%i.txt", j);
+	// fd = fopen(fname, "w");
+	// if (!fd) return 1;
+	// fprintf(fd, "%jx\n", (uintmax_t)dupl[0]);
+	// for (i = 0; i < cover[0] - 1; i++) {
+	// 	if (dupl[i] != dupl[i + 1])
+	// 		fprintf(fd, "%jx\n", (uintmax_t)dupl[i + 1]);
+	// }
+	// fclose(fd);
+	buffer[(*nbuf)++] = dupl[0];
 	for (i = 0; i < cover[0] - 1; i++) {
 		if (dupl[i] != dupl[i + 1])
-			fprintf(fd, "%jx\n", (uintmax_t)dupl[i + 1]);
+			buffer[(*nbuf)++] = dupl[i + 1];
 	}
-	fclose(fd);
 	free(dupl);
 	return 0;
 }
@@ -120,7 +141,6 @@ int coverage(FILE *nmfile, FILE *adfile, int fl)
 
 	while (fgets(afname, 100, adfile) != NULL) {
 		afname[strlen(afname) - 1] = '\0';
-		// TODO if functions are repeated 
 		if (afname[0] == '?' || !strcmp(nmfname, afname)) {
 			fgets(afname, 100, adfile);
 			continue;
@@ -166,9 +186,9 @@ int coverage(FILE *nmfile, FILE *adfile, int fl)
 
 int main(int argc, char **argv)
 {
-	int fd, pid, status, nl = 0;
+	int fd, pid, status, nbuf = 0, nl = 0;
 	FILE *nmfile, *addrfile;
-	cover_t *cover;
+	cover_t *cover, *buffer;
 	int j = 1;
 	char fname[40];
 	char command[200];
@@ -209,20 +229,26 @@ int main(int argc, char **argv)
 		perror("execvp");
 		exit(1);
 	}
+	buffer = malloc(KCOV_ENTRY_SIZE * BUF_SIZE);
+	if (!buffer){
+		kill(pid, SIGTERM);
+		perror("malloc: BUF_SIZE"), exit(1);
+	}
 	while (waitpid(-1, &status, WNOHANG) != pid) {
 		if (cover[0] > COUNT) {
 			kill(pid, SIGSTOP);
-			if (wtfile(fname, j, cover)) {
+			if (wtbuffer(fname, j, cover, buffer, &nbuf)) {
 				kill(pid, SIGTERM);
-				perror("wtfile"), exit(1);
+				perror("wtbuffer"), exit(1);
 			}
 			j++;
 			cover[0] = 0;
+			lseek(fd, 0, SEEK_SET);
 			kill(pid, SIGCONT);
 		}
 	}
-	if (wtfile(fname, j, cover)) {
-		perror("wtfile"), exit(1);
+	if (wtbuffer(fname, j, cover, buffer, &nbuf)) {
+		perror("wtbuffer"), exit(1);
 	}
 	if (munmap(cover, COVER_SIZE * KCOV_ENTRY_SIZE))
 		perror("munmap"), exit(1);
@@ -238,10 +264,16 @@ int main(int argc, char **argv)
 		fclose(nmfile);
 	} else
 		a2l = "addr2line";
-	for (int k = 0; k < j; k++) {
-		sprintf(command, "%s -f -e "KERNEL" < rawfiles/rawfile%i.txt | tee addrs/addrtrace%i.txt", a2l, k + 1, k + 1);
-		system(command);
-	}
+	// for (int k = 0; k < j; k++) {
+	// 	sprintf(command, "%s -f -e "KERNEL" < rawfiles/rawfile%i.txt | tee addrs/addrtrace%i.txt", a2l, k + 1, k + 1);
+	// 	system(command);
+	// }
+	qsort(buffer, nbuf, KCOV_ENTRY_SIZE, compare);
+	wtfile(buffer, nbuf);
+
+	sprintf(command, "%s -f -e "KERNEL" < rawfiles/rawfile.txt | tee addrs/addrtrace.txt", a2l);
+	system(command);
+	free(buffer);
 
 	nmfile = fopen("nmlines.txt", "r");
 	if (!nmfile) {
@@ -250,13 +282,16 @@ int main(int argc, char **argv)
 	}
 
 	int fl = 0;
-	for (int k = 0; k < j; k++) {
-		sprintf(fname, "addrs/addrtrace%i.txt", k + 1);
-		addrfile = fopen(fname, "r");
-		coverage(nmfile, addrfile, fl);
-		fclose(addrfile);
-		fl = 1;
-	}
+	// for (int k = 0; k < j; k++) {
+	// 	sprintf(fname, "addrs/addrtrace%i.txt", k + 1);
+	// 	addrfile = fopen(fname, "r");
+	// 	coverage(nmfile, addrfile, fl);
+	// 	fclose(addrfile);
+	// 	fl = 1;
+	// }
+	addrfile = fopen("addrs/addrtrace.txt", "r");
+	coverage(nmfile, addrfile, fl);
+	fclose(addrfile);
 	fclose(nmfile);
 
 	system("rm -R "COV_DIR);
