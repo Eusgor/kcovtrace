@@ -16,36 +16,36 @@
 #include <sys/kcov.h>
 
 #define KCOV_PATH "/dev/kcov"
-typedef uint64_t cover_t;
 #define COVER_SIZE (16 << 20)
 #define BUF_SIZE (2 << 20)
-#define COUNT 15000000
+#define COUNT 16000000
 #define COV_FILE "coverage.info"
 #define ADDR2LINE "/usr/local/bin/addr2line"
-// #define KERNEL "/usr/obj/usr/src/amd64.amd64/sys/GENERIC/kernel.debug"
 #define KERNEL "/usr/lib/debug/boot/kernel/kernel.debug"
 #define KERNDIR "/usr/src/sys"
 #define COV_DIR "cov_info"
 
-#define NOTFOUND 1
-#define NF_FILE "notfound.txt"  //not found functions
+size_t bufsize = KCOV_ENTRY_SIZE * BUF_SIZE;
+
+#define NF_FILE "notfound.log"  //not found functions
 
 static int compare(const void *p1, const void *p2)
 {
-	cover_t i = *((cover_t *)p1);
-	cover_t j = *((cover_t *)p2);
+	size_t i = *((size_t *)p1);
+	size_t j = *((size_t *)p2);
 
 	if (i > j) return (1);
 	if (i < j) return (-1);
-	return (0);
+	return 0;
 }
 
-int wtfile(cover_t *buffer, int nbuf)
+int wtfile(size_t *buffer, int nbuf)
 {
 	int i;
 	FILE *fd;
-	fd = fopen("rawfiles/rawfile.txt", "w");
-	if (!fd) return 1;
+	fd = fopen("rawfile.log", "w");
+	if (!fd) 
+		return 1;
 	fprintf(fd, "%jx\n", (uintmax_t)buffer[0]);
 	for (i = 0; i < nbuf - 1; i++) {
 		if (buffer[i] != buffer[i + 1])
@@ -55,24 +55,24 @@ int wtfile(cover_t *buffer, int nbuf)
 	return 0;
 }
 
-int wtbuffer(char *fname, int j, cover_t *cover, cover_t *buffer, int *nbuf)
+int wtbuffer(char *fname, size_t *cover, size_t *buffer, int *nbuf)
 {
 	int i;
-	cover_t *dupl = malloc(cover[0] * KCOV_ENTRY_SIZE);
-	if (!dupl) return 1;
-	memcpy(dupl, &cover[1], cover[0] * KCOV_ENTRY_SIZE);
+	if (*nbuf > (bufsize * 70 / 100)) {
+		bufsize *= 2;
+		buffer = realloc(buffer, bufsize);
+		if (!buffer) 
+			return 1;
+	}
+	size_t size = cover[0] * KCOV_ENTRY_SIZE;
+	size_t *dupl = malloc(size);
+	if (!dupl) 
+		return 1;
+	for (int j = 0; j < cover[0]; j++)
+		dupl[j] = cover[j + 1];
 
 	qsort(dupl, cover[0], KCOV_ENTRY_SIZE, compare);
 
-	// sprintf(fname, "rawfiles/rawfile%i.txt", j);
-	// fd = fopen(fname, "w");
-	// if (!fd) return 1;
-	// fprintf(fd, "%jx\n", (uintmax_t)dupl[0]);
-	// for (i = 0; i < cover[0] - 1; i++) {
-	// 	if (dupl[i] != dupl[i + 1])
-	// 		fprintf(fd, "%jx\n", (uintmax_t)dupl[i + 1]);
-	// }
-	// fclose(fd);
 	buffer[(*nbuf)++] = dupl[0];
 	for (i = 0; i < cover[0] - 1; i++) {
 		if (dupl[i] != dupl[i + 1])
@@ -94,7 +94,7 @@ int copyfunc(char *nmfname, char *str)
 
 int copypath(char *fpath, int *line, char *str)
 {
-	int i;
+	int i, k;
 	char *start;
 	char nmline[10];
 	start = strchr(str, '/');
@@ -107,7 +107,8 @@ int copypath(char *fpath, int *line, char *str)
 	}
 	fpath[i] = '\0';
 	i++;
-	int k;
+	if (start[i] == '?' || start[i] == '0') 
+		return 3;
 	for (k = 0; !isspace(start[i]); i++, k++) {
 		nmline[k] = start[i];
 	}
@@ -117,34 +118,32 @@ int copypath(char *fpath, int *line, char *str)
 	return 0;
 }
 
-int coverage(FILE *nmfile, FILE *adfile, int fl) 
+int coverage(FILE *nmfile, FILE *adfile) 
 {
-	FILE *covfile;
-	int nmline, ret;    // line number in nm file
-	char afname[100];  	// function name in address file
-	char nmfname[100] = "";  // function name in nm file
-	char fpath[200];  	// function path in nm file
-	char str[400]; 		// nm file string
-	if (fl)
-		covfile = fopen(COV_FILE, "a");
-	else
-		covfile = fopen(COV_FILE, "w");
+	FILE *covfile, *srcfile;
+	char *match;
+	int nmline, aline, ret, len, nf = 0;    // line number in nm file
+	char afname[100];  						// function name in address file
+	char nmfname[100] = "";  				// function name in nm file
+	char fpath[200];  						// function path in nm file
+	char str[400]; 							// nm file string
+	char srcstr[1024];
+	covfile = fopen(COV_FILE, "w");
+	if (!covfile)
+		return 1;
 
-#ifdef NOTFOUND
-	int nf = 0;
 	FILE *notfound;
-	if (fl)
-		notfound = fopen(NF_FILE, "a");
-	else
-		notfound = fopen(NF_FILE, "w");
-#endif
+	notfound = fopen(NF_FILE, "w");
+	if (!notfound)
+		return 1;
 
 	while (fgets(afname, 100, adfile) != NULL) {
-		afname[strlen(afname) - 1] = '\0';
-		if (afname[0] == '?' || !strcmp(nmfname, afname)) {
-			fgets(afname, 100, adfile);
+		if (afname[0] == '?') {
+			fgets(str, 200, adfile);
 			continue;
-		}		
+		}
+		ret = 0;
+		afname[strlen(afname) - 1] = '\0';
 		while (fgets(str, 400, nmfile) != NULL) {
 			copyfunc(nmfname, str);
 			if (strcmp(nmfname, afname)) 
@@ -153,59 +152,83 @@ int coverage(FILE *nmfile, FILE *adfile, int fl)
 			ret = copypath(fpath, &nmline, str);
 			if (ret) 
 				break;
-#ifdef NOTFOUND
 			nf = 1;
-#endif
 			fprintf(covfile, "SF:%s\n", fpath);
 			fprintf(covfile, "DA:%i,1\nDA:%i,1\nDA:%i,1\n", nmline -2, nmline -1, nmline);
 			fprintf(covfile, "end_of_record\n");
 			break;
 		}
-#ifdef NOTFOUND
+		fgets(str, 200, adfile);
+		if (ret != 2 && !nf) {			
+			ret = copypath(fpath, &aline, str);
+			if (!ret) {
+				fprintf(covfile, "SF:%s\n", fpath);
+				fprintf(covfile, "DA:%i,1\n", aline);
+				fprintf(covfile, "end_of_record\n");
+				nf = 1;
+			} else if (ret == 3) {
+				srcfile = fopen(fpath, "r");
+				if (!srcfile)
+					return 1;
+				nmline = 0;
+				while (fgets(srcstr, 1024, srcfile) != NULL) {
+					nmline++;
+					match = strstr(srcstr, afname);
+					if (!match) 
+						continue;
+					len = strlen(afname);
+					if (match[len] != '(' && match[len] != ' ')
+						continue;
+					if (!isspace(srcstr[0])) {
+						nf = 1;
+						break;
+					}
+				}
+				if (nf) {
+					fprintf(covfile, "SF:%s\n", fpath);
+					fprintf(covfile, "DA:%i,1\nDA:%i,1\nDA:%i,1\n", nmline - 1, nmline, nmline + 1);
+					fprintf(covfile, "end_of_record\n");
+				}
+			}
+		}
+		
 		if (ret == 2)
-			fprintf(notfound, "%s: in /usr/obj/\n", afname);
+			fprintf(notfound, "%s: in /usr/obj: ", afname);
 		else if (!nf)
 			fprintf(notfound, "%s: not found: ", afname);
-#endif
-		fgets(afname, 100, adfile);
-#ifdef NOTFOUND
+
 		if (!nf)
-			fprintf(notfound, "%s", afname);
+			fprintf(notfound, "%s", str);
+
 		nf = 0;
-#endif
 		fseek(nmfile, 0, SEEK_SET);
 	}
 	
-#ifdef NOTFOUND
 	fclose(notfound);
-#endif
-
 	fclose(covfile);
 	return 0;
 }
 
 int main(int argc, char **argv)
 {
-	int fd, pid, status, nbuf = 0, nl = 0;
+	int fd, pid, status, nbuf = 0, nl = 0, html = 0;
 	FILE *nmfile, *addrfile;
-	cover_t *cover, *buffer;
-	int j = 1;
+	size_t *cover, *buffer;
 	char fname[40];
 	char command[200];
 	char smbl;
 
-	system("rm -R rawfiles");
-	mkdir("rawfiles", 0755);
-
 	if (argc == 1)
-		fprintf(stderr, "usage: kcovtrace program [args...]\n"), exit(1);
+		fprintf(stderr, "usage: kcovtrace [--html] program [args...]\n"), exit(1);
+	if (!strcmp(argv[1], "--html"))
+		html = 1;
 	nmfile = fopen(KERNEL, "r");
 	if (!nmfile)
-		perror("File "KERNEL" doesn't exist"), exit(1);
+		perror("File "KERNEL), exit(1);
 	fclose(nmfile);
 	nmfile = fopen(KERNDIR, "r");
-	if (!nmfile)
-		perror("Directory "KERNDIR" doesn't exist"), exit(1);
+	if (!nmfile) 
+		perror("Directory "KERNDIR), exit(1);
 	fclose(nmfile);
 		
 	fd = open(KCOV_PATH, O_RDWR);
@@ -214,9 +237,9 @@ int main(int argc, char **argv)
 
 	if (ioctl(fd, KIOSETBUFSIZE, COVER_SIZE))
 		perror("ioctl:KIOSETBUFSIZE"), exit(1);
-	cover = (cover_t*)mmap(NULL, COVER_SIZE * KCOV_ENTRY_SIZE,
+	cover = (size_t*)mmap(NULL, COVER_SIZE * KCOV_ENTRY_SIZE,
 			       PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	if ((void*)cover == MAP_FAILED)
+	if ((void *)cover == MAP_FAILED)
 		perror("mmap"), exit(1);
 	pid = fork();
 	if (pid < 0)
@@ -225,11 +248,14 @@ int main(int argc, char **argv)
 		if (ioctl(fd, KIOENABLE, KCOV_MODE_TRACE_PC))
 			perror("ioctl:KIOENABLE"), exit(1);
 		cover[0] = 0;
-		execvp(argv[1], argv + 1);
+		if (html)
+			execvp(argv[2], argv + 2);
+		else
+			execvp(argv[1], argv + 1);
 		perror("execvp");
-		exit(1);
+		exit(255);
 	}
-	buffer = malloc(KCOV_ENTRY_SIZE * BUF_SIZE);
+	buffer = malloc(bufsize);
 	if (!buffer){
 		kill(pid, SIGTERM);
 		perror("malloc: BUF_SIZE"), exit(1);
@@ -237,17 +263,23 @@ int main(int argc, char **argv)
 	while (waitpid(-1, &status, WNOHANG) != pid) {
 		if (cover[0] > COUNT) {
 			kill(pid, SIGSTOP);
-			if (wtbuffer(fname, j, cover, buffer, &nbuf)) {
+			if (wtbuffer(fname, cover, buffer, &nbuf)) {
 				kill(pid, SIGTERM);
 				perror("wtbuffer"), exit(1);
 			}
-			j++;
 			cover[0] = 0;
-			lseek(fd, 0, SEEK_SET);
 			kill(pid, SIGCONT);
 		}
 	}
-	if (wtbuffer(fname, j, cover, buffer, &nbuf)) {
+	
+	if (WEXITSTATUS(status) == 255) {
+		if (html)			
+			fprintf(stderr, "File %s not found\n", argv[2]);
+		else
+			fprintf(stderr, "File %s not found\n", argv[1]);
+		exit(1);
+	}
+	if (wtbuffer(fname, cover, buffer, &nbuf)) {
 		perror("wtbuffer"), exit(1);
 	}
 	if (munmap(cover, COVER_SIZE * KCOV_ENTRY_SIZE))
@@ -255,8 +287,6 @@ int main(int argc, char **argv)
 	if (close(fd))
 		perror("close"), exit(1);
 	
-	system("rm -R addrs");
-	mkdir("addrs", 0755);
 	char *a2l;
 	nmfile = fopen(ADDR2LINE, "r");
 	if (nmfile) {
@@ -264,33 +294,33 @@ int main(int argc, char **argv)
 		fclose(nmfile);
 	} else
 		a2l = "addr2line";
-	// for (int k = 0; k < j; k++) {
-	// 	sprintf(command, "%s -f -e "KERNEL" < rawfiles/rawfile%i.txt | tee addrs/addrtrace%i.txt", a2l, k + 1, k + 1);
-	// 	system(command);
-	// }
-	qsort(buffer, nbuf, KCOV_ENTRY_SIZE, compare);
-	wtfile(buffer, nbuf);
 
-	sprintf(command, "%s -f -e "KERNEL" < rawfiles/rawfile.txt | tee addrs/addrtrace.txt", a2l);
+	qsort(buffer, nbuf, KCOV_ENTRY_SIZE, compare);
+	if (wtfile(buffer, nbuf))
+		perror("wtfile"), exit(1);
+
+	sprintf(command, "%s -f -e "KERNEL" < rawfile.log | tee trace.log", a2l);
 	system(command);
 	free(buffer);
+
+	if (!html) {
+		printf("Full report in trace.log file\n");
+		return 0;
+	}
 
 	nmfile = fopen("nmlines.txt", "r");
 	if (!nmfile) {
 		system("nm --debug-syms -elP "KERNEL" | tee nmlines.txt");
 		nmfile = fopen("nmlines.txt", "r");
+		if (!nmfile)
+			perror("nmlines"), exit(1);
 	}
 
-	int fl = 0;
-	// for (int k = 0; k < j; k++) {
-	// 	sprintf(fname, "addrs/addrtrace%i.txt", k + 1);
-	// 	addrfile = fopen(fname, "r");
-	// 	coverage(nmfile, addrfile, fl);
-	// 	fclose(addrfile);
-	// 	fl = 1;
-	// }
-	addrfile = fopen("addrs/addrtrace.txt", "r");
-	coverage(nmfile, addrfile, fl);
+	addrfile = fopen("trace.log", "r");
+	if (!addrfile)
+		perror("open: addrfile"), exit(1);
+	if (coverage(nmfile, addrfile))
+		perror("coverage"), exit(1);
 	fclose(addrfile);
 	fclose(nmfile);
 
@@ -300,5 +330,8 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
+	printf("Full report in trace.log file\n");
+	printf("Html report in cov_info directory\n");
+	printf("Functions not shown in html report in notfound.log file\n");
 	return 0;
 }
