@@ -16,7 +16,7 @@
 #include <sys/kcov.h>
 
 #define KCOV_PATH "/dev/kcov"
-#define COVER_SIZE (16 << 20)
+#define COVER_SIZE (16 << 20)	//maximum size
 #define BUF_SIZE (2 << 20)
 #define COUNT 16000000
 #define COV_FILE "coverage.info"
@@ -39,6 +39,7 @@ static int compare(const void *p1, const void *p2)
 	return 0;
 }
 
+// write to the file
 int wtfile(size_t *buffer, int nbuf)
 {
 	int i;
@@ -55,6 +56,7 @@ int wtfile(size_t *buffer, int nbuf)
 	return 0;
 }
 
+//write to the buffer
 int wtbuffer(char *fname, size_t *cover, size_t *buffer, int *nbuf)
 {
 	int i;
@@ -82,6 +84,7 @@ int wtbuffer(char *fname, size_t *cover, size_t *buffer, int *nbuf)
 	return 0;
 }
 
+//copy the function name from the string
 int copyfunc(char *nmfname, char *str)
 {
 	int i;
@@ -92,6 +95,8 @@ int copyfunc(char *nmfname, char *str)
 	return 0;
 }
 
+//copy the path to the file from the string
+//copy the line number
 int copypath(char *fpath, int *line, char *str)
 {
 	int i, k;
@@ -118,6 +123,7 @@ int copypath(char *fpath, int *line, char *str)
 	return 0;
 }
 
+//create a coverage report in lcov format
 int coverage(FILE *nmfile, FILE *adfile) 
 {
 	FILE *covfile, *srcfile;
@@ -260,6 +266,7 @@ int main(int argc, char **argv)
 		kill(pid, SIGTERM);
 		perror("malloc: BUF_SIZE"), exit(1);
 	}
+	//control the child proccess
 	while (waitpid(-1, &status, WNOHANG) != pid) {
 		if (cover[0] > COUNT) {
 			kill(pid, SIGSTOP);
@@ -299,6 +306,7 @@ int main(int argc, char **argv)
 	if (wtfile(buffer, nbuf))
 		perror("wtfile"), exit(1);
 
+	//use addr2file system program to get function and file names 
 	sprintf(command, "%s -f -e "KERNEL" < rawfile.log | tee trace.log", a2l);
 	system(command);
 	free(buffer);
@@ -308,6 +316,8 @@ int main(int argc, char **argv)
 		return 0;
 	}
 
+	//use the nm system program to get a list of all kernel functions,
+	//except static functions
 	nmfile = fopen("nmlines.txt", "r");
 	if (!nmfile) {
 		system("nm --debug-syms -elP "KERNEL" | tee nmlines.txt");
@@ -324,6 +334,7 @@ int main(int argc, char **argv)
 	fclose(addrfile);
 	fclose(nmfile);
 
+	//generate html coverage report
 	system("rm -R "COV_DIR);
 	if (system("genhtml coverage.info --output-directory ./"COV_DIR)) {
 		printf("\nlcov not installed\nUse: genhtml coverage.info --output-directory /out/dir");
