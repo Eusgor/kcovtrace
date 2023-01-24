@@ -332,6 +332,6 @@ int main(int argc, char **argv)
 
 	printf("Full report in trace.log file\n");
 	printf("Html report in cov_info directory\n");
-	printf("Functions not shown in html report in notfound.log file\n");
+	printf("Functions not shown in html report are in notfound.log file\n");
 	return 0;
 }
