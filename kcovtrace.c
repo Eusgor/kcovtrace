@@ -160,7 +160,7 @@ int coverage(FILE *nmfile, FILE *adfile)
 				break;
 			nf = 1;
 			fprintf(covfile, "SF:%s\n", fpath);
-			fprintf(covfile, "DA:%i,1\nDA:%i,1\nDA:%i,1\n", nmline -2, nmline -1, nmline);
+			fprintf(covfile, "DA:%i,1\n", nmline);
 			fprintf(covfile, "end_of_record\n");
 			break;
 		}
@@ -192,7 +192,7 @@ int coverage(FILE *nmfile, FILE *adfile)
 				}
 				if (nf) {
 					fprintf(covfile, "SF:%s\n", fpath);
-					fprintf(covfile, "DA:%i,1\nDA:%i,1\nDA:%i,1\n", nmline - 1, nmline, nmline + 1);
+					fprintf(covfile, "DA:%i,1\n", nmline);
 					fprintf(covfile, "end_of_record\n");
 				}
 			}
