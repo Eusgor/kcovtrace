@@ -73,8 +73,10 @@ int wtbuffer(char *fname, size_t *cover, size_t *buffer, int *nbuf)
 	for (int j = 0; j < cover[0]; j++)
 		dupl[j] = cover[j + 1];
 
+	//sort
 	qsort(dupl, cover[0], KCOV_ENTRY_SIZE, compare);
 
+	//compress without counting
 	buffer[(*nbuf)++] = dupl[0];
 	for (i = 0; i < cover[0] - 1; i++) {
 		if (dupl[i] != dupl[i + 1])
@@ -128,11 +130,11 @@ int coverage(FILE *nmfile, FILE *adfile)
 {
 	FILE *covfile, *srcfile;
 	char *match;
-	int nmline, aline, ret, len, nf = 0;    // line number in nm file
-	char afname[100];  						// function name in address file
-	char nmfname[100] = "";  				// function name in nm file
-	char fpath[200];  						// function path in nm file
-	char str[400]; 							// nm file string
+	int nmline, aline, ret, len, nf = 0;		// line number in nm file
+	char afname[100];				// function name in address file
+	char nmfname[100] = "";				// function name in nm file
+	char fpath[200];				// function path in nm file
+	char str[400];					// nm file string
 	char srcstr[1024];
 	covfile = fopen(COV_FILE, "w");
 	if (!covfile)
@@ -160,6 +162,8 @@ int coverage(FILE *nmfile, FILE *adfile)
 				break;
 			nf = 1;
 			fprintf(covfile, "SF:%s\n", fpath);
+			fprintf(covfile, "FN:%i,%s\n", nmline, afname);
+			fprintf(covfile, "FNDA:1,%s\n", afname);
 			fprintf(covfile, "DA:%i,1\n", nmline);
 			fprintf(covfile, "end_of_record\n");
 			break;
@@ -169,6 +173,8 @@ int coverage(FILE *nmfile, FILE *adfile)
 			ret = copypath(fpath, &aline, str);
 			if (!ret) {
 				fprintf(covfile, "SF:%s\n", fpath);
+				fprintf(covfile, "FN:%i,%s\n", aline, afname);
+				fprintf(covfile, "FNDA:1,%s\n", afname);
 				fprintf(covfile, "DA:%i,1\n", aline);
 				fprintf(covfile, "end_of_record\n");
 				nf = 1;
@@ -192,6 +198,8 @@ int coverage(FILE *nmfile, FILE *adfile)
 				}
 				if (nf) {
 					fprintf(covfile, "SF:%s\n", fpath);
+					fprintf(covfile, "FN:%i,%s\n", nmline, afname);
+					fprintf(covfile, "FNDA:1,%s\n", afname);
 					fprintf(covfile, "DA:%i,1\n", nmline);
 					fprintf(covfile, "end_of_record\n");
 				}
