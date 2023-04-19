@@ -196,6 +196,7 @@ int coverage(FILE *nmfile, FILE *adfile)
 						break;
 					}
 				}
+				fclose(srcfile);
 				if (nf) {
 					fprintf(covfile, "SF:%s\n", fpath);
 					fprintf(covfile, "FN:%i,%s\n", nmline, afname);
